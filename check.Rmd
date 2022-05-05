@@ -1,0 +1,90 @@
+---
+title: "check"
+output: html_document
+---
+
+
+```{r}
+library(StanHeaders)
+library(ggplot2)
+library(rstan)
+library(gridExtra)
+rstan_options (auto_write = TRUE)
+options (mc.cores = parallel::detectCores ())
+```
+
+```{r}
+s_prior <- rstan::extract(fit_sir)
+
+# one arbitrary draw from the prior distribution
+draw <- 12 
+# the number of predicted cases sampled from the prior distribution, which we will use as data
+cases_simu <- s_prior$pred_cases[draw,] 
+cases_simu1 <- c(2000,cases_simu)
+```
+
+```{r}
+data_simu <-  list (n_days  = n_days, t0 = t0, ts = t, N=N, cases=cases_simu1)
+fit_sir_simu <- sampling(sir_underreporting_model, 
+                     data=data_simu, 
+                     iter =1000,
+                     chains=4)
+```
+
+```{r}
+
+data_seir_v_simu <- list(n_days = n_days, t0 = t0, ts = t, x_r= c(n_days,v), cases =cases_simu1 , N = N )
+fit_seir_V_simu <- sampling(seir_v_model, 
+                    data = data_seir_v_simu, 
+                    iter =1000,
+                    chains = 4)
+```
+
+```{r}
+c_posterior <- 'yellow'
+smr_pred <- cbind(as.data.frame(summary(fit_sir_simu, pars = "pred_cases", probs = c(0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975))$summary), t=1:(n_days-1), cases = cases[1:length(cases)-1])
+colnames(smr_pred) <- make.names(colnames(smr_pred)) # to remove % in the col names
+
+ggplot(smr_pred, mapping = aes(x = t)) +
+  #geom_ribbon(aes(ymin = X2.5., ymax = X97.5.), fill = c_dark, ) +
+  geom_bar(mapping = aes(x = t, y = cases_simu), fill = 'dark gray', color = 'light blue', stat = "identity") +
+  geom_ribbon(aes(ymin = X5., ymax = X95.), fill = c_posterior, alpha=0.35) +
+  #geom_ribbon(aes(ymin = X10., ymax = X90.), fill = c_light) +
+  geom_line(mapping = aes(x = t, y = X50.), color = c_posterior) +
+  #geom_point(mapping = aes(y = cases)) +
+  labs(x = "Day", y = "Incidence")
+```
+
+
+```{r}
+c_posterior <- 'yellow'
+smr_pred <- cbind(as.data.frame(summary(fit_seir_V_simu, pars = "pred_cases", probs = c(0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975))$summary), t=1:(n_days-1), cases = cases[1:length(cases)-1])
+colnames(smr_pred) <- make.names(colnames(smr_pred)) # to remove % in the col names
+
+ggplot(smr_pred, mapping = aes(x = t)) +
+  #geom_ribbon(aes(ymin = X2.5., ymax = X97.5.), fill = c_dark, ) +
+  geom_bar(mapping = aes(x = t, y = cases_simu), fill = 'dark gray', color = 'light blue', stat = "identity") +
+  geom_ribbon(aes(ymin = X5., ymax = X95.), fill = c_posterior, alpha=0.35) +
+  #geom_ribbon(aes(ymin = X10., ymax = X90.), fill = c_light) +
+  geom_line(mapping = aes(x = t, y = X50.), color = c_posterior) +
+  #geom_point(mapping = aes(y = cases)) +
+  labs(x = "Day", y = "Incidence")
+```
+
+
+
+
+
+
+
+```{r}
+library(bridgesampling)
+SIR_null1 <- bridge_sampler(fit_sir_simu,data = cases_simu1, silent = TRUE)
+SEIR1 <- bridge_sampler(fit_seir_V_simu,data = cases_simu1, silent = TRUE)
+BF_att <- bridgesampling::bf(SEIR1,SIR_null1 )
+BF_att
+
+```
+
+
+

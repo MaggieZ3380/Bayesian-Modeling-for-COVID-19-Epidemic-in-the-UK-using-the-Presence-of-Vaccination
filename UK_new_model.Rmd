@@ -1,0 +1,160 @@
+---
+title: "UK_new_model"
+output: html_document
+date: '2022-03-21'
+---
+
+```{r}
+library(StanHeaders)
+library(ggplot2)
+library(rstan)
+library(gridExtra)
+library(tidyverse)
+rstan_options (auto_write = TRUE)
+options (mc.cores = parallel::detectCores ())
+```
+
+
+```{r}
+data1 <- read.csv('0106-0108.csv')
+data1[,"date"]<-as.POSIXct(data1[,"date"])
+```
+
+```{r}
+v_pred <- function(data, no_f){
+  alpha <- 0.75
+  for (i in 1:no_f){
+    new_data <- alpha* data[i+2] +alpha*(1-alpha)*data[i+1] + alpha *(1-alpha)^2 *data[i]
+    data <- c(data, new_data)
+  }
+  end <- 3 +no_f
+  data[4: end]
+}
+
+data <- c(36672, 35960, 35486)
+
+
+
+```
+
+
+```{r}
+cases <- as.integer(data1$new_cases_smoothed)
+#total population
+N <- 67.22E6
+
+
+# times
+n_forecast_days <-7
+n_days <- length(cases) + n_forecast_days
+t <- seq(1, n_days, by = 1)
+t0 <- 0
+t <- t
+
+V_pred <- v_pred(data = data, no_f = n_forecast_days)
+v <- as.integer(c(data1$new_people_vaccinated_smoothed , V_pred))
+
+#forecastts <-seq((n_days+1),(n_days+n_forecast_days),by=1)
+
+#data from stan
+data_seir_v_2_peaks <- list(n_days = n_days, n_cases=length(cases),
+                            t0 = t0, ts = t, x_r= c(n_days,v), cases = cases, N = N)
+```
+
+```{r}
+seir_v_2_peaks_model <- stan_model('2_peaks.stan')
+fit_seir_V_2_peaks <- sampling(seir_v_2_peaks_model, 
+                    data = data_seir_v_2_peaks, 
+                    iter =1000,
+                    chains = 4)
+```
+
+
+```{r}
+#summary table for the results
+print(fit_seir_V_2_peaks, pars = c('lambda1', 'lambda2','sigma', 'mu', 'p_reported', 'R0_1', 'R0_2'))
+```
+
+
+```{r}
+#posterior density for separate chain
+stan_dens(fit_seir_V_2_peaks, pars = c('lambda1', 'lambda2','sigma', 'mu', 'p_reported', 'R0_1', 'R0_2'), separate_chains = TRUE)
+```
+
+
+
+```{r}
+SMR_pred_2 <- cbind(as.data.frame(summary(fit_seir_V_2_peaks, pars = "pred_cases", probs = c(0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975))$summary), t=1:(n_days-1))
+colnames(SMR_pred_2) <- make.names(colnames(SMR_pred_2)) 
+```
+
+```{r}
+data2 <- read.csv('data_forecast.csv')
+```
+
+
+```{r}
+# 7 days forecast 
+
+Prediction <- data.frame(Prediction= "1st August", x = 61, ymin = 0, ymax = 60000)
+ggplot(SMR_pred_2, mapping = aes(x = t)) +
+  #geom_ribbon(aes(ymin = X2.5., ymax = X97.5.), fill = c_dark, ) +
+  geom_bar(mapping = aes(x = t, y = data2$new_cases_smoothed[2:69],  fill = 'Daily Cases'), stat = "identity") +
+  geom_ribbon(aes(ymin = X5., ymax = X95., fill = '90% CI'), alpha=0.15) +
+  #geom_ribbon(aes(ymin = X10., ymax = X90.), fill = c_light) +
+  geom_line(mapping = aes(x = t, y = X50., color = 'Posterior Mean')) + 
+  geom_linerange(data = Prediction, mapping = aes(x = x, ymin = ymin, ymax = ymax, linetype= Prediction))+
+  labs(x = "Day", y = "Incidence")+
+  scale_color_manual('',values = c('red'))+
+  scale_fill_manual("",values=c('red', 'grey'))
+```
+
+```{r}
+#summary for p_reported
+summary(fit_seir_V_2_peaks, pars = c("p_reported"))$summary
+```
+
+
+```{r}
+#posterior density for p_reported with mean, median and 95% CI
+stan_dens(fit_seir_V_2_peaks, pars = 'p_reported', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_seir_V_2_peaks, pars = c("p_reported"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_seir_V_2_peaks, pars = c("p_reported"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_seir_V_2_peaks, pars = c("p_reported"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_seir_V_2_peaks, pars = c("p_reported"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "p", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+```
+
+
+
+```{r}
+library("bayesplot")
+  
+fit_seir_V_2_peaks
+
+
+```
+
+
+
+
+
+
+
+```{r}
+c(mean(rstan::extract(fit_seir_V_2_peaks)$R0_1), mean(rstan::extract(fit_seir_V_2_peaks)$R0_2))
+
+```
+
+
+
+

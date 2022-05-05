@@ -1,0 +1,104 @@
+---
+title: "compare"
+output: html_document
+---
+
+```{r}
+library(StanHeaders)
+library(ggplot2)
+library(rstan)
+library(gridExtra)
+rstan_options (auto_write = TRUE)
+options (mc.cores = parallel::detectCores ())
+```
+
+
+```{r}
+data1 <- read.csv('0106-0108.csv')
+```
+
+
+```{r}
+# cases
+cases <- as.integer(data1$new_cases_smoothed)
+
+#total population
+N <- 67.22E6
+
+# times
+n_days <- length(cases)
+t <- seq(1, n_days, by = 1)
+t0 <- 0
+t <- t
+
+#data from stan
+data_sir <- list(n_days = n_days, t0 = t0, ts = t, N = N, cases = cases)
+```
+
+
+
+```{r}
+#incorporating under reporting
+
+sir_underreporting_model <- stan_model('sir_underreporting.stan')
+
+fit_sir <- sampling(sir_underreporting_model, 
+                    data = data_sir, 
+                    iter = 1000,
+                    chains = 4)
+```
+
+
+
+```{r}
+v <- as.integer(data1$new_people_vaccinated_smoothed)
+n_days <- length(cases)
+t <- seq(1, n_days, by = 1)
+t0 <- 0
+t <- t
+
+
+#data from stan
+data_seir_v <- list(n_days = n_days, t0 = t0, ts = t, x_r= c(n_days,v), cases = cases, N = N )
+```
+
+
+```{r}
+seir_v_model <- stan_model('SEIR(vaccination).stan')
+fit_seir_V <- sampling(seir_v_model, 
+                    data = data_seir_v, 
+                    iter =1000,
+                    chains=4)
+```
+                    
+```{r}
+library(bridgesampling)
+SIR_null <- bridge_sampler(fit_sir,data = cases, silent = TRUE)
+SEIR <- bridge_sampler(fit_seir_V,data = cases, silent = TRUE)
+BF_att <- bridgesampling::bf(SEIR,SIR_null )
+BF_att
+```
+                    
+
+
+```{r}
+H0.error <- error_measures(SIR_null)$percentage
+H1.error <- error_measures(SEIR)$percentage
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+                    
+                    
+                    
+                    

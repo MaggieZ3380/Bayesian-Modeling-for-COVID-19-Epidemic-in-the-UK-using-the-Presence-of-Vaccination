@@ -1,0 +1,164 @@
+---
+title: "UK_SEIR_V"
+output: html_document
+---
+
+```{r}
+library(StanHeaders)
+library(ggplot2)
+library(rstan)
+library(gridExtra)
+rstan_options (auto_write = TRUE)
+options (mc.cores = parallel::detectCores ())
+```
+
+
+```{r}
+data1 <- read.csv('0106-0108.csv')
+data1[,"date"]<-as.POSIXct(data1[,"date"])
+data1
+```
+
+```{r}
+# cases
+cases <- as.integer(data1$new_cases_smoothed)
+#total population
+N <- 67.22E6
+v <- as.integer(data1$new_people_vaccinated_smoothed)
+
+#initial conditions
+#i0 <- cases[1]*0.1  # initial of infected 
+#e0 <- cases[1]*0.1
+#s0 <- N - i0 - e0
+#r0 <- 0
+#y0 = c(S = s0, E = e0, I = i0, R = r0)
+
+# times
+n_days <- length(cases)
+t <- seq(1, n_days, by = 1)
+t0 = 0
+t <- t
+
+
+#data from stan
+data_seir_v <- list(n_days = n_days, t0 = t0, ts = t, x_r= c(n_days,v), cases = cases, N = N )
+```
+
+
+```{r}
+seir_v_model <- stan_model('SEIR(vaccination).stan')
+fit_seir_V <- sampling(seir_v_model, 
+                    data = data_seir_v, 
+                    iter =1000,
+                    chains = 4)
+```
+
+```{r}
+smr_pred <- cbind(as.data.frame(summary(fit_seir_V, pars = "pred_cases", probs = c(0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975))$summary), t=1:(n_days-1), cases = cases[1:length(cases)-1])
+colnames(smr_pred) <- make.names(colnames(smr_pred)) # to remove % in the col names
+
+#ggplot(smr_pred, mapping = aes(x = t)) +
+  #geom_ribbon(aes(ymin = X2.5., ymax = X97.5.), fill = c_dark, ) +
+  #geom_bar(mapping = aes(x = t, y = data1$new_cases_smoothed[2:62]), fill = 'dark gray', color = 'light blue', stat = "identity") +
+  #geom_ribbon(aes(ymin = X5., ymax = X95.), fill = c_posterior, alpha=0.35) +
+  #geom_ribbon(aes(ymin = X10., ymax = X90.), fill = c_light) +
+  #geom_line(mapping = aes(x = t, y = X50.), color = c_posterior) +
+  #geom_point(mapping = aes(y = cases)) +
+  #labs(x = "Day", y = "Incidence")
+
+
+ggplot(smr_pred, mapping = aes(x = t)) +
+  #geom_ribbon(aes(ymin = X2.5., ymax = X97.5.), fill = c_dark, ) +
+  geom_bar(mapping = aes(x = t, y = data1$new_cases_smoothed[2:62],  fill = 'Daily Cases'), stat = "identity") +
+  geom_ribbon(aes(ymin = X5., ymax = X95., fill = '90% CI'), alpha=0.15) +
+  #geom_ribbon(aes(ymin = X10., ymax = X90.), fill = c_light) +
+  geom_line(mapping = aes(x = t, y = X50., color = 'Posterior Mean')) + 
+  labs(x = "Day", y = "Incidence")+
+  scale_color_manual('',values = 'yellow')+
+  scale_fill_manual("",values=c('yellow', 'grey'))
+```
+
+```{r}
+pars=c('lambda', 'sigma','mu','phi_inv', 'I0',"E0",'alpha', 'R0', 'p_reported')
+print(fit_seir_V, pars = pars)
+
+```
+
+```{r}
+stan_dens(fit_seir_V, pars = pars, separate_chains = TRUE)
+
+```
+
+```{r}
+traceplot(fit_seir_V, pars = pars)
+
+```
+
+```{r}
+summary(fit_seir_V, pars = c("mu"))$summary
+```
+
+
+```{r}
+library("ggpubr")
+
+lambda <-stan_dens(fit_seir_V, pars = 'lambda', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("lambda"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("lambda"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("lambda"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("lambda"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "beta", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+
+
+sigma <- stan_dens(fit_seir_V, pars = 'sigma', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("sigma"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("sigma"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("sigma"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("sigma"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "alpha", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+
+mu <- stan_dens(fit_seir_V, pars = 'mu', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("mu"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("mu"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("mu"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_seir_V, pars = c("mu"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "gamma", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+
+
+ggarrange(lambda, sigma, mu, ncol = 3, nrow = 1, common.legend = TRUE, legend = "left")
+```
+
+```{r}
+plot(rstan::extract(fit_seir_V)$lambda,rstan::extract(fit_seir_V)$mu, xlab = 'beta', ylab = 'gamma' )
+
+print(summary(fit_seir_V, pars = c("lambda"))$summary[1]/summary(fit_seir_V, pars = c("mu"))$summary[1])
+```
+
+

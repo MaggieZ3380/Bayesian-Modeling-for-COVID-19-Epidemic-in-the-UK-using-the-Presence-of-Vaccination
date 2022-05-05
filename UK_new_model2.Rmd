@@ -1,0 +1,196 @@
+---
+title: "UK_new_model2"
+output: html_document
+date: '2022-04-25'
+---
+
+```{r}
+library(StanHeaders)
+library(ggplot2)
+library(rstan)
+library(gridExtra)
+library(tidyverse)
+rstan_options (auto_write = TRUE)
+options (mc.cores = parallel::detectCores ())
+#install.packages("ggpubr")
+library("ggpubr")
+```
+
+
+```{r}
+data1 <- read.csv('0106-0108.csv')
+data1[,"date"]<-as.POSIXct(data1[,"date"])
+```
+
+```{r}
+v_pred <- function(data, no_f){
+  alpha <- 0.75
+  for (i in 1:no_f){
+    new_data <- alpha* data[i+2] +alpha*(1-alpha)*data[i+1] + alpha *(1-alpha)^2 *data[i]
+    data <- c(data, new_data)
+  }
+  end <- 3 +no_f
+  data[4: end]
+}
+
+data <- c(36672, 35960, 35486)
+
+
+
+```
+
+
+```{r}
+cases <- as.integer(data1$new_cases_smoothed)
+#total population
+N <- 67.22E6
+
+
+# times
+n_forecast_days <-7
+n_days <- length(cases) + n_forecast_days
+t <- seq(1, n_days, by = 1)
+t0 <- 0
+t <- t
+
+V_pred <- v_pred(data = data, no_f = n_forecast_days)
+v <- as.integer(c(data1$new_people_vaccinated_smoothed , V_pred))
+
+#forecastts <-seq((n_days+1),(n_days+n_forecast_days),by=1)
+
+#data from stan
+data_pseir_v <- list(n_days = n_days, n_cases=length(cases),
+                            t0 = t0, ts = t, x_r= c(n_days,v), cases = cases, N = N)
+```
+
+```{r}
+pseir_v_model <- stan_model('2.stan')
+fit_pseir_v <- sampling(pseir_v_model, 
+                    data = data_pseir_v, 
+                    iter =1000,
+                    chains = 4)
+```
+
+```{r}
+SMR_pred_3 <- cbind(as.data.frame(summary(fit_pseir_v, pars = "pred_cases", probs = c(0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975))$summary), t=1:(n_days-1))
+colnames(SMR_pred_3) <- make.names(colnames(SMR_pred_3)) 
+```
+
+```{r}
+data2 <- read.csv('data_forecast.csv')
+```
+
+
+```{r}
+# 7 days forecast
+Prediction <- data.frame(Prediction= "1st August", x = 61, ymin = 0, ymax = 60000)
+ggplot(SMR_pred_3, mapping = aes(x = t)) +
+  #geom_ribbon(aes(ymin = X2.5., ymax = X97.5.), fill = c_dark, ) +
+  geom_bar(mapping = aes(x = t, y = data2$new_cases_smoothed[2:69],  fill = 'Daily Cases'), stat = "identity") +
+  geom_ribbon(aes(ymin = X5., ymax = X95., fill = '90% CI'), alpha=0.15) +
+  #geom_ribbon(aes(ymin = X10., ymax = X90.), fill = c_light) +
+  geom_line(mapping = aes(x = t, y = X50., color = 'Posterior Mean')) + 
+  geom_linerange(data = Prediction, mapping = aes(x = x, ymin = ymin, ymax = ymax, linetype= Prediction))+
+  labs(x = "Day", y = "Incidence")+
+  scale_color_manual('',values = c('red'))+
+  scale_fill_manual("",values=c('red', 'grey'))
+  
+
+
+
+
+```
+
+
+
+```{r}
+# summary table of the result
+print(fit_pseir_v, pars = c('lambda1', 'lambda2', 'sigma', 'mu','alpha', 'p_reported','phi_inv', 'I0', 'E0'))
+```
+
+```{r}
+stan_dens(fit_pseir_v, separate_chains = TRUE)
+```
+
+
+
+
+```{r}
+summary(fit_pseir_v, pars = c("lambda1",'mu'))$summary
+```
+
+```{r}
+# posterior density for p_reported with mean, median and 95% CI
+stan_dens(fit_pseir_v, pars = 'p_reported', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("p_reported"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("p_reported"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("p_reported"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("p_reported"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "p", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+```
+
+```{r}
+# postrior density for beta_p, beta and mu
+lambda1 <-stan_dens(fit_pseir_v, pars = 'lambda1', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("lambda1"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("lambda1"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("lambda1"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("lambda1"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "beta", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+
+
+lambda2 <- stan_dens(fit_pseir_v, pars = 'lambda2', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("lambda2"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("lambda2"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("lambda2"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("lambda2"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "beta_p", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+
+mu <- stan_dens(fit_pseir_v, pars = 'mu', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("mu"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("mu"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("mu"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_pseir_v, pars = c("mu"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "mu", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+
+
+ggarrange(lambda1, lambda2, mu, ncol = 3, nrow = 1, common.legend = TRUE, legend = "right")
+```
+
+

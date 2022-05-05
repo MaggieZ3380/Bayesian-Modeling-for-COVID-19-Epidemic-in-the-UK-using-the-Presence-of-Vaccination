@@ -1,0 +1,170 @@
+---
+title: "UK2"
+output: html_document
+---
+
+```{r}
+library(StanHeaders)
+library(ggplot2)
+library(rstan)
+library(gridExtra)
+library(tidyverse)
+rstan_options (auto_write = TRUE)
+options (mc.cores = parallel::detectCores ())
+```
+
+```{r}
+data1 <- read.csv('0106-0108.csv')
+data1[,"date"]<-as.POSIXct(data1[,"date"])
+data1
+```
+
+```{r}
+
+
+data1 %>% 
+  ggplot() + 
+  geom_bar(mapping = aes(x = date, y = new_cases, fill = 'Daily cases'), stat = "identity") +
+  geom_point(data = data1, aes(x = date, y = new_cases_smoothed, color = '7 days Menas'),stat = "identity")+
+  labs(y="Number of reported cases", title = 'Daily New Cases Data in the UK')+
+  scale_color_manual('', values = 'darkgreen') + 
+  scale_fill_manual('', values = "grey") 
+
+data1 %>% 
+  ggplot() + 
+  geom_line(mapping = aes(x = date, y = new_people_vaccinated_smoothed), color = 'dark blue', stat = "identity") +
+  labs(y="Number of people vaccinated")
+
+
+
+
+```
+#SIR
+
+```{r}
+# cases
+cases <- as.integer(data1$new_cases_smoothed)
+
+#total population
+N <- 67.22E6
+
+#initial conditions
+#i0 <- cases[1]*10  # initial of infected  
+#s0 <- N - i0
+#r0 <- 0
+#y0 = c(S = s0, I = i0, R = r0)
+
+# times
+n_days <- length(cases)
+t <- seq(1, n_days, by = 1)
+t0 = 0
+t <- t
+
+#data from stan
+data_sir <- list(n_days = n_days, t0 = t0, ts = t, N = N, cases = cases)
+```
+
+```{r}
+#incorporating under reporting
+
+sir_underreporting_model <- stan_model('sir_underreporting.stan')
+
+fit_sir <- sampling(sir_underreporting_model, 
+                    data = data_sir, 
+                    iter =1000,
+                    chains = 4)
+```
+
+```{r}
+#posterior predictive check
+
+c_posterior <- 'orange'
+smr_pred <- cbind(as.data.frame(summary(fit_sir, pars = "pred_cases", probs = c(0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975))$summary), t=1:(n_days-1), cases = cases[1:length(cases)-1])
+colnames(smr_pred) <- make.names(colnames(smr_pred)) # to remove % in the col names
+
+
+ggplot(smr_pred, mapping = aes(x = t)) +
+  #geom_ribbon(aes(ymin = X2.5., ymax = X97.5.), fill = c_dark, ) +
+  geom_bar(mapping = aes(x = t, y = data1$new_cases_smoothed[2:62],  fill = 'Daily Cases'), stat = "identity") +
+  geom_ribbon(aes(ymin = X5., ymax = X95., fill = '90% CI'), alpha=0.15) +
+  #geom_ribbon(aes(ymin = X10., ymax = X90.), fill = c_light) +
+  geom_line(mapping = aes(x = t, y = X50., color = 'Posterior Mean')) + 
+  labs(x = "Day", y = "Incidence", title = 'Posterior Predctive Check')+
+  scale_color_manual('',values = 'orange')+
+  scale_fill_manual("",values=c('orange', 'grey'))
+```
+
+```{r}
+# summary table of the results
+pars=c('beta', 'gamma', "R0", "recovery_time", 'phi_inv', 'i0', 'p_reported')
+print(fit_sir, pars = pars)
+```
+
+
+```{r}
+# posterior density for separate chain
+stan_dens(fit_sir, pars = pars, separate_chains = TRUE)
+
+```
+
+
+```{r}
+#traceplot for separate chain
+traceplot(fit_sir, pars = pars)
+
+```
+
+
+```{r}
+library("ggpubr")
+#posterior density
+
+beta <-stan_dens(fit_sir, pars = 'beta', fill = 'purple', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_sir, pars = c("beta"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_sir, pars = c("beta"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_sir, pars = c("beta"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_sir, pars = c("beta"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "beta", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+
+
+gamma <- stan_dens(fit_sir, pars = 'gamma', fill = 'purple', alpha = 0.25) +
+  geom_vline(aes(xintercept= summary(fit_sir, pars = c("gamma"))$summary[6],
+                 color="median"), linetype="dashed",
+             size=1)+ 
+  geom_vline(aes(xintercept= summary(fit_sir, pars = c("gamma"))$summary[1],
+                 color="mean"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_sir, pars = c("gamma"))$summary[4],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  geom_vline(aes(xintercept= summary(fit_sir, pars = c("gamma"))$summary[8],
+                 color="95% CI"), linetype="dashed",
+             size=1)+
+  labs(x = "gamma", y = "Density")+
+  scale_color_manual('', values = c('median' = 'blue', 'mean' = 'red', '95% CI' = 'grey'))
+
+
+ggarrange(beta, gamma, ncol = 3, nrow = 1, common.legend = TRUE, legend = "left")
+```
+
+
+```{r}
+#prior predictive check
+s_prior <- rstan::extract(fit_sir)
+ggplot(tibble(r = s_prior$R0)) + 
+  geom_density(aes(x = r),fill='yellow', alpha = 0.6) + 
+  geom_vline(xintercept = c(1,5), color = "red",linetype=2) + 
+  scale_x_log10() +
+  scale_y_continuous(expand=expansion(c(0,.05))) +
+  labs(x="Basic reproduction number (log)",y="Probability density")
+```
+

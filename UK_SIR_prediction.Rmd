@@ -1,0 +1,86 @@
+---
+title: "UK_SIR_prediction"
+output: html_document
+date: '2022-03-11'
+---
+
+```{r}
+library(StanHeaders)
+library(ggplot2)
+library(rstan)
+library(gridExtra)
+library(tidyverse)
+rstan_options (auto_write = TRUE)
+options (mc.cores = parallel::detectCores ())
+```
+
+
+```{r}
+data1 <- read.csv('0106-0108.csv')
+data1[,"date"]<-as.POSIXct(data1[,"date"])
+
+# cases
+cases <- as.integer(data1$new_cases_smoothed)
+
+#total population
+N <- 67.22E6
+
+# times
+n_forecast_days <-7
+n_days <- length(cases) + n_forecast_days
+t <- seq(1, n_days, by = 1)
+n_cases <- length(cases)
+#forecastts <-seq((n_days+1),(n_days+n_forecast_days),by=1)
+t0 <- 0
+t <- t
+
+#data from stan
+data_sir_prediction <- list(n_days = n_days,n_cases = n_cases, t0 = t0, ts = t, N = N, cases = cases)
+```
+
+
+```{r}
+sir_prediction_model <- stan_model('SIR_prediction.stan')
+
+fit_sir_prediction <- sampling(sir_prediction_model, 
+                    data = data_sir_prediction, 
+                    iter =1000,
+                    chains = 4)
+```
+
+
+
+```{r}
+smr_pred1 <- cbind(as.data.frame(summary(fit_sir_prediction, pars = "pred_cases", probs = c(0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975))$summary), t=1:(n_days-1))
+colnames(smr_pred1) <- make.names(colnames(smr_pred1)) 
+```
+
+```{r}
+data2 <- read.csv('data_forecast.csv')
+data2[,"date"]<-as.POSIXct(data2[,"date"])
+```
+
+```{r}
+ggplot(smr_pred1, mapping = aes(x = t))+
+  geom_bar(mapping = aes(x = t, y = data2$new_cases_smoothed[2:69]), fill = 'dark gray', color = 'light blue', stat = "identity") +
+  geom_ribbon(aes(ymin = X5., ymax = X95.), fill = 'purple', alpha=0.15) +
+  #geom_ribbon(aes(ymin = X10., ymax = X90.), fill = c_light) +
+  geom_line(mapping = aes(x = t, y = X50.), color = 'purple') + 
+  geom_vline(xintercept = 61) +
+  labs(x = "Day", y = "Incidence")
+  
+```
+
+
+```{r}
+smr_pred2 <- cbind(as.data.frame(summary(fit_sir_prediction, pars = "pred_cases", probs = c(0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975))$summary),t=1:(n_days-1))
+```
+
+
+```{r}
+smr_pred3 <- rbind(smr_pred2,smr_pred1)
+```
+
+
+
+
